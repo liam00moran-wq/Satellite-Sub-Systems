@@ -1,0 +1,79 @@
+import os
+import cv2
+import numpy as np
+
+#change to your folder with cropped FOV imgs and another folder in your system
+input_folder = r"C:\Users\liam0\Documents\Masters\Sat Sub Sys\Lough Neagh Gen Imgs"
+output_base_folder = r"C:\Users\liam0\Documents\Masters\Sat Sub Sys\Reduced imgs"
+
+#new img size, keep square as the camera sensor the imgs are based off is square
+#added option for rectangle in case camera module changes
+target_width = 64
+target_height = 64
+
+#creates a new fiolder to save the imgs to
+output_folder = os.path.join(output_base_folder, f"{target_width}x{target_height} reduction")
+os.makedirs(output_folder, exist_ok=True)
+
+def block_average_resize(img, target_h, target_w):
+    """
+    Reduces image to target size by averaging blocks of pixels.
+    
+    Parameters:
+    -----------
+    img : np.ndarray
+        Input image (H x W)
+    target_h : int
+        Target height
+    target_w : int
+        Target width
+        
+    Returns:
+    --------
+    np.ndarray
+        Reduced image of shape (target_h, target_w)
+    """
+    h, w = img.shape[:2]
+
+    #calculate size of each block
+    block_h = h / target_h
+    block_w = w / target_w
+
+    #initialize output
+    reduced = np.zeros((target_h, target_w, img.shape[2]), dtype=img.dtype)
+
+    for i in range(target_h):
+        for j in range(target_w):
+            
+            #calculate pixel range for this block
+            y1 = int(i * block_h)
+            y2 = int((i + 1) * block_h)
+            x1 = int(j * block_w)
+            x2 = int((j + 1) * block_w)
+
+            block = img[y1:y2, x1:x2]
+
+            #average the block
+            reduced[i, j] = block.mean(axis=(0, 1))
+
+    return reduced.astype(img.dtype)
+
+#saving the new imgs
+for filename in os.listdir(input_folder):
+    if not filename.lower().endswith((".png", ".jpg", ".jpeg", ".tif")):
+        continue
+
+    path = os.path.join(input_folder, filename)
+    img = cv2.imread(path)
+
+    if img is None:
+        print(f"Failed to load {filename}")
+        continue
+
+    reduced_img = block_average_resize(img, target_height, target_width)
+
+    output_path = os.path.join(output_folder, filename)
+    cv2.imwrite(output_path, reduced_img)
+
+#just to know youve finished and it hasnt crashed
+print("Done :))
