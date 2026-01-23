@@ -1,0 +1,145 @@
+import os
+import cv2
+import csv
+import random
+import numpy as np
+from math import tan, radians
+
+#img being viewed
+input_image_path = "./Lough.jpg"
+
+#output folder path
+#change to your folder
+output_folder = r"C:\Users\liam0\Documents\Masters\Sat Sub Sys\Lough Neagh Gen Imgs"
+csv_path = os.path.join(output_folder, "metadata.csv")
+
+#ground coverage of satellite image (meters)
+#this takes some figuring out
+#if wrong the imgs will be stretched
+ground_image_width_m = 64640           # total width of image on the ground in meters
+ground_image_height_m = 38857  
+
+#Camera parameters
+FOV = 60.0
+#heights you wish to simulate 
+camera_heights_m = [10000, 15000]  # MULTIPLE HEIGHTS
+
+#Rotation options
+
+#True for random directional variations, could be used for testing
+use_random_yaw = False        
+rotation_step_deg = 15
+random_yaw_count = 24         #used if random yaw is enabled
+
+#overlap of each new img
+overlap_fraction = 0.2
+
+#camera resolution
+output_size = (324,324)      
+
+os.makedirs(output_folder, exist_ok=True)  #create folder if it doesn't exist
+
+#rotate function
+def rotate_full_image(image, angle_deg):
+     """
+    Rotates an input image around its center by a specified angle.
+
+    Parameters:
+    ----------
+    image : numpy.ndarray
+        The input image array (H x W x C) to rotate.
+    angle_deg : float
+        The rotation angle in degrees. Positive values rotate counter-clockwise.
+
+    Returns:
+    -------
+    numpy.ndarray
+        The rotated image of the same size as the input. Areas outside the original 
+        image are filled using reflection to avoid black borders.
+    """
+    h, w = image.shape[:2]
+    center = (w // 2, h // 2)
+    M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+    return cv2.warpAffine(
+        image, M, (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT
+    )
+
+#csv file
+csv_file = open(csv_path, "w", newline="")
+csv_writer = csv.writer(csv_file)
+csv_writer.writerow([
+    "image_name", "x_m", "y_m", "height_m", "yaw_deg", "crop_id"
+])
+
+#img reading
+img = cv2.imread(input_image_path)
+if img is None:
+    raise FileNotFoundError(f"Could not load image: {input_image_path}")
+
+#get pixel size
+img_h, img_w = img.shape[:2]
+meters_per_pixel_x = ground_image_width_m / img_w
+meters_per_pixel_y = ground_image_height_m / img_h
+
+base_name = os.path.splitext(os.path.basename(input_image_path))[0]
+
+#getting the new view 
+for camera_height_m in camera_heights_m:
+
+    footprint_m = 2 * camera_height_m * tan(radians(FOV / 2))
+    footprint_px_x = int(footprint_m / meters_per_pixel_x)
+    footprint_px_y = int(footprint_m / meters_per_pixel_y)
+
+    stride_px_x = int(footprint_px_x * (1 - overlap_fraction))
+    stride_px_y = int(footprint_px_y * (1 - overlap_fraction))
+
+    if footprint_px_x <= 0 or footprint_px_y <= 0:
+        continue
+
+    if use_random_yaw:
+        yaw_angles = [random.uniform(0, 360) for _ in range(random_yaw_count)]
+    else:
+        yaw_angles = list(range(0, 360, rotation_step_deg))
+
+    for yaw in yaw_angles:
+        rotated = rotate_full_image(img, yaw)
+        crop_id = 1
+
+        for y in range(0, img_h - footprint_px_y + 1, stride_px_y):
+            for x in range(0, img_w - footprint_px_x + 1, stride_px_x):
+
+                crop = rotated[y:y + footprint_px_y, x:x + footprint_px_x]
+
+                if crop.shape[0] != footprint_px_y or crop.shape[1] != footprint_px_x:
+                    continue
+
+                if output_size is not None:
+                    crop = cv2.resize(crop, output_size, interpolation=cv2.INTER_LINEAR)
+
+                out_name = (
+                    f"{base_name}_h{int(camera_height_m)}_yaw{int(yaw)}_{crop_id}.png"
+                )
+                #saved to new folder
+                cv2.imwrite(os.path.join(output_folder, out_name), crop)
+
+                #center of crop in ground meters
+                x_center_m = (x + footprint_px_x / 2) * meters_per_pixel_x
+                y_center_m = (y + footprint_px_y / 2) * meters_per_pixel_y
+
+                csv_writer.writerow([
+                    out_name,
+                    round(x_center_m, 2),
+                    round(y_center_m, 2),
+                    int(camera_height_m),
+                    round(yaw, 2),
+                    crop_id
+                ])
+
+                crop_id += 1
+
+print(f"Processed {input_image_path}")
+
+csv_file.close()
+print(f"DONE: images + metadata.csv generated in {output_folder}")
